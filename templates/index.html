@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SMAT - Panel de Procesos</title>
+
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <!-- Animate.css -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
+
+  <style>
+    :root{
+      --bg:#0f1720;
+      --card:#0b1220;
+      --danger:#b71c1c;
+      --ok:#2e7d32;
+      --muted:#9aa4ad;
+    }
+    body { background:var(--bg); color:#eef2f5; font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
+    .navbar { background:var(--danger); }
+    .container { padding-top:28px; padding-bottom:28px; }
+    .table thead th { background: rgba(183,28,28,0.12); color:#fff; }
+    .table tbody tr.unauth { background: rgba(183,28,28,0.06); }
+    .badge-ok { background:var(--ok); color:#fff; }
+    .badge-alert { background:var(--danger); color:#fff; }
+    .controls { gap:8px; display:flex; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+    .search-input { min-width:220px; max-width:420px; }
+    .small-muted { color:var(--muted); font-size:0.9rem; }
+    .whitelist-btn { font-size:0.8rem; padding:4px 8px; }
+    .table-responsive { max-height:65vh; overflow:auto; }
+    .toast-container { position: fixed; bottom: 16px; right: 16px; z-index: 1080; }
+  </style>
+</head>
+<body>
+
+  <nav class="navbar navbar-dark shadow">
+    <div class="container-fluid">
+      <a class="navbar-brand fw-bold" href="#">⚡ SMAT</a>
+      <div class="small-muted">Monitoreo en tiempo real</div>
+    </div>
+  </nav>
+
+  <main class="container">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <h1 class="h4 mb-0">Procesos</h1>
+      <div class="small-muted">Conexión: <span id="ws-status">—</span></div>
+    </div>
+
+    <div class="controls">
+      <div class="btn-group" role="group" aria-label="Filtros">
+        <button id="btn-all" class="btn btn-sm btn-outline-light">Todos</button>
+        <button id="btn-auth" class="btn btn-sm btn-outline-success">Autorizados</button>
+        <button id="btn-unauth" class="btn btn-sm btn-outline-danger">No autorizados</button>
+      </div>
+
+      <input id="search" class="form-control form-control-sm search-input" placeholder="Buscar PC, proceso o IP" />
+
+      <div class="ms-auto d-flex gap-2">
+        <button id="refresh" class="btn btn-sm btn-secondary">Refrescar</button>
+        <button id="clear-cache" class="btn btn-sm btn-outline-warning">Limpiar cache</button>
+      </div>
+    </div>
+
+    <div class="table-responsive shadow rounded">
+      <table class="table table-dark table-hover mb-0">
+        <thead>
+          <tr>
+            <th style="width:6%">ID</th>
+            <th style="width:14%">PC</th>
+            <th style="width:12%">IP</th>
+            <th style="width:30%">Proceso</th>
+            <th style="width:8%">PID</th>
+            <th style="width:18%">Fecha</th>
+            <th style="width:12%">Estado</th>
+          </tr>
+        </thead>
+        <tbody id="events-body"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <!-- Toasts -->
+  <div class="toast-container" id="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- Modal: Confirm add to whitelist -->
+  <div class="modal fade" id="whitelistModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+      <div class="modal-content bg-dark text-light">
+        <div class="modal-header">
+          <h5 class="modal-title">Agregar a whitelist</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <p id="whitelist-modal-text" class="mb-0 small-muted"></p>
+        </div>
+        <div class="modal-footer">
+          <button id="whitelist-confirm" type="button" class="btn btn-sm btn-success">Agregar</button>
+          <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bootstrap JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+  (function () {
+    const API_EVENTS = "/events/";
+    const API_WHITELIST = "/whitelist/";
+    const tbody = document.getElementById("events-body");
+    const btnAll = document.getElementById("btn-all");
+    const btnAuth = document.getElementById("btn-auth");
+    const btnUnauth = document.getElementById("btn-unauth");
+    const refreshBtn = document.getElementById("refresh");
+    const clearCacheBtn = document.getElementById("clear-cache");
+    const searchInput = document.getElementById("search");
+    const wsStatus = document.getElementById("ws-status");
+
+    let rowsCache = []; // newest first
+    let currentFilter = "all"; // all | auth | unauth
+
+    // Toast helper
+    function showToast(title, body, type="info", timeout=4000) {
+      const id = "t" + Date.now();
+      const container = document.getElementById("toast-container");
+      const toastEl = document.createElement("div");
+      toastEl.className = "toast align-items-center text-bg-dark border";
+      toastEl.id = id;
+      toastEl.role = "alert";
+      toastEl.ariaLive = "assertive";
+      toastEl.ariaAtomic = "true";
+      toastEl.style.minWidth = "220px";
+      toastEl.innerHTML = `
+        <div class="d-flex">
+          <div class="toast-body">
+            <strong>${title}</strong><div class="small-muted">${body}</div>
+          </div>
+          <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+      `;
+      container.appendChild(toastEl);
+      const bsToast = new bootstrap.Toast(toastEl, { delay: timeout });
+      bsToast.show();
+      setTimeout(() => {
+        try { toastEl.remove(); } catch(e) {}
+      }, timeout + 500);
+    }
+
+    // Render helpers
+    function createRowElement(d) {
+      const tr = document.createElement("tr");
+      if (!d.autorizado) tr.classList.add("unauth");
+      const fecha = d.fecha ? d.fecha : "";
+      tr.innerHTML = `
+        <td>${d.id ?? ""}</td>
+        <td>${escapeHtml(d.pc ?? "")}</td>
+        <td>${escapeHtml(d.ip ?? "")}</td>
+        <td>${escapeHtml(d.proceso ?? "")}</td>
+        <td>${d.pid ?? ""}</td>
+        <td>${escapeHtml(fecha)}</td>
+        <td>
+          ${d.autorizado ? '<span class="badge badge-ok">Autorizado</span>' : '<span class="badge badge-alert">Proceso no autorizado</span>'}
+          ${d.autorizado ? '' : ' <button class="btn btn-sm btn-outline-light whitelist-btn" data-proc="'+escapeAttr(d.proceso)+'">Agregar</button>'}
+        </td>
+      `;
+      // attach whitelist button handler
+      const btn = tr.querySelector(".whitelist-btn");
+      if (btn) {
+        btn.addEventListener("click", () => openWhitelistModal(d.proceso));
+      }
+      return tr;
+    }
+
+    function addRowToTop(d) {
+      const tr = createRowElement(d);
+      if (tbody.firstChild) tbody.insertBefore(tr, tbody.firstChild);
+      else tbody.appendChild(tr);
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]; });
+    }
+    function escapeAttr(s){ return escapeHtml(s); }
+
+    // Filtering & search
+    function matchesFilter(d) {
+      if (currentFilter === "auth" && !d.autorizado) return false;
+      if (currentFilter === "unauth" && d.autorizado) return false;
+      return true;
+    }
+    function matchesSearch(d, q) {
+      if (!q) return true;
+      q = q.toLowerCase();
+      return (d.pc||"").toLowerCase().includes(q) ||
+             (d.proceso||"").toLowerCase().includes(q) ||
+             (d.ip||"").toLowerCase().includes(q);
+    }
+
+    function renderFromCache() {
+      tbody.innerHTML = "";
+      for (const d of rowsCache) {
+        if (!matchesFilter(d)) continue;
+        if (!matchesSearch(d, searchInput.value)) continue;
+        addRowToTop(d);
+      }
+    }
+
+    // Fetch events from API
+    async function fetchEvents() {
+      try {
+        const res = await fetch(API_EVENTS);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        // data is array of events (newest first)
+        rowsCache = data.concat(rowsCache).slice(0, 1000); // keep reasonable cache
+        renderFromCache();
+      } catch (err) {
+        console.warn("Error fetching events:", err);
+        showToast("Error", "No se pudieron cargar eventos", "error", 3000);
+      }
+    }
+
+    // WebSocket live updates
+    function setupWebSocket() {
+      const loc = window.location;
+      const wsProtocol = (loc.protocol === "https:") ? "wss:" : "ws:";
+      const wsUrl = wsProtocol + "//" + loc.host + "/ws";
+      let ws;
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch (err) {
+        console.warn("WS open error", err);
+        wsStatus.textContent = "WS no disponible";
+        return;
+      }
+
+      ws.addEventListener("open", () => {
+        wsStatus.textContent = "Conectado";
+      });
+
+      ws.addEventListener("message", (evt) => {
+        try {
+          const payload = JSON.parse(evt.data);
+          // payload can be list or single
+          if (Array.isArray(payload)) {
+            payload.forEach(p => handleIncomingEvent(p));
+          } else {
+            handleIncomingEvent(payload);
+          }
+        } catch (err) {
+          console.warn("WS message parse error", err);
+        }
+      });
+
+      ws.addEventListener("close", () => {
+        wsStatus.textContent = "Desconectado";
+        console.warn("WS cerrado. Reintentando en 3s...");
+        setTimeout(setupWebSocket, 3000);
+      });
+
+      ws.addEventListener("error", (err) => {
+        console.warn("WS error", err);
+      });
+    }
+
+    function handleIncomingEvent(d) {
+      // Normalize fields
+      d.autorizado = (d.autorizado === undefined) ? true : Boolean(d.autorizado);
+      // push to cache (newest first)
+      rowsCache.unshift(d);
+      // keep cache size
+      if (rowsCache.length > 2000) rowsCache.length = 2000;
+      // if matches current filter & search, add to DOM
+      if (matchesFilter(d) && matchesSearch(d, searchInput.value)) {
+        addRowToTop(d);
+      }
+      // show toast for unauth
+      if (!d.autorizado) {
+        showToast("Alerta", `${d.proceso} en ${d.pc} (${d.ip})`, "danger", 5000);
+      }
+    }
+
+    // Whitelist modal logic
+    const whitelistModalEl = document.getElementById("whitelistModal");
+    const whitelistModal = new bootstrap.Modal(whitelistModalEl, { backdrop: "static", keyboard: false });
+    const whitelistModalText = document.getElementById("whitelist-modal-text");
+    const whitelistConfirmBtn = document.getElementById("whitelist-confirm");
+    let whitelistPendingProceso = null;
+
+    function openWhitelistModal(proceso) {
+      whitelistPendingProceso = proceso;
+      whitelistModalText.textContent = `Agregar "${proceso}" a la whitelist para marcarlo como autorizado en futuros eventos.`;
+      whitelistConfirmBtn.disabled = false;
+      whitelistModal.show();
+    }
+
+    whitelistConfirmBtn.addEventListener("click", async () => {
+      if (!whitelistPendingProceso) return;
+      whitelistConfirmBtn.disabled = true;
+      try {
+        const res = await fetch(API_WHITELIST, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ proceso: whitelistPendingProceso })
+        });
+        const j = await res.json();
+        if (res.ok) {
+          showToast("Whitelist", `Proceso "${whitelistPendingProceso}" agregado.`, "success", 3500);
+          // Update cache: mark matching processes as autorizado
+          rowsCache = rowsCache.map(r => {
+            if (r.proceso && r.proceso.toLowerCase() === whitelistPendingProceso.toLowerCase()) {
+              r.autorizado = true;
+            }
+            return r;
+          });
+          renderFromCache();
+        } else {
+          showToast("Error", j.detail || j.msg || "No se pudo agregar", "error", 3500);
+        }
+      } catch (err) {
+        console.warn("Whitelist add error", err);
+        showToast("Error", "Fallo al agregar a whitelist", "error", 3500);
+      } finally {
+        whitelistPendingProceso = null;
+        whitelistModal.hide();
+      }
+    });
+
+    // UI events
+    btnAll.addEventListener("click", () => { currentFilter = "all"; renderFromCache(); });
+    btnAuth.addEventListener("click", () => { currentFilter = "auth"; renderFromCache(); });
+    btnUnauth.addEventListener("click", () => { currentFilter = "unauth"; renderFromCache(); });
+    refreshBtn.addEventListener("click", () => fetchEvents());
+    clearCacheBtn.addEventListener("click", () => { rowsCache = []; renderFromCache(); showToast("Cache", "Cache limpiada", "info", 1500); });
+    searchInput.addEventListener("input", () => renderFromCache());
+
+    // Initial load
+    fetchEvents();
+    setupWebSocket();
+
+    // Expose for debugging (optional)
+    window.smat = { rowsCache, fetchEvents, renderFromCache };
+
+  })();
+  </script>
+</body>
+</html>

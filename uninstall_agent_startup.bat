@@ -1,0 +1,68 @@
+@echo off
+REM Script para desinstalar el agente SMAT
+REM Elimina la tarea programada que se ejecutaba al iniciar
+
+setlocal enabledelayedexpansion
+
+echo.
+echo ============================================
+echo DESINSTALADOR DE AGENTE SMAT
+echo ============================================
+echo.
+
+REM Verificar permisos de administrador
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    echo [ERROR] Este script requiere permisos de ADMINISTRADOR
+    echo.
+    echo Por favor:
+    echo 1. Abre CMD como administrador
+    echo 2. Navega a esta carpeta
+    echo 3. Ejecuta: uninstall_agent_startup.bat
+    echo.
+    pause
+    exit /b 1
+)
+
+echo [OK] Ejecutando con permisos de administrador
+echo.
+
+set TASK_NAME=SMAT_Agent
+
+REM Verificar si la tarea existe
+schtasks /query /tn "%TASK_NAME%" >nul 2>&1
+if %errorLevel% neq 0 (
+    echo [INFO] La tarea "%TASK_NAME%" no esta instalada
+    echo.
+    pause
+    exit /b 0
+)
+
+echo [INFO] Encontrada tarea "%TASK_NAME%"
+echo.
+echo [INFO] Eliminando tarea programada...
+echo.
+
+REM Eliminar la tarea
+schtasks /delete /tn "%TASK_NAME%" /f
+
+if %errorLevel% equ 0 (
+    echo.
+    echo [SUCCESS] Tarea programada eliminada exitosamente
+    echo.
+    echo El agente SMAT NO se ejecutara mas al iniciar.
+    echo.
+) else (
+    echo.
+    echo [ERROR] No se pudo eliminar la tarea programada
+    echo.
+    pause
+    exit /b 1
+)
+
+echo.
+echo ============================================
+echo DESINSTALACION COMPLETADA
+echo ============================================
+echo.
+pause
