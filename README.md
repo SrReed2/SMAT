@@ -1,153 +1,131 @@
 # SMAT - Sistema de Monitoreo Activo de Procesos
 
+SMAT es una solución para monitorear procesos no autorizados en las computadoras de un laboratorio. Consta de un servidor central que recibe los eventos y de agentes instalados en las máquinas cliente que detectan procesos y los envían al servidor.
 
-┌─────────────────────────────────────────────────────────────┐
-│            SERVIDOR CENTRAL (Tu máquina)                    │
-│                                                             │
-│  📡 run_server.py → Escucha en 0.0.0.0:8000                │
-│  ✅ Recibe eventos de procesos                             │
-│  💾 Almacena en BD (smat.db)                               │
-│  🌐 Interfaz web en http://localhost:8000                  │
-└────────────────┬────────────────────────────────────────────┘
-                 │
-        HTTP POST /events/
-                 │
-    ┌────────────┴────────────┬─────────────┐
-    │                         │             │
-    ▼                         ▼             ▼
- [PC02]                    [PC03]         [PC04]
- agent.py                  agent.py       agent.py
- Monitorea procesos        Monitorea     Monitorea
- Envía no autorizados      procesos      procesos
+## Qué hace SMAT
+- Recibe datos de procesos desde varias máquinas.
+- Registra eventos en una base de datos local (`smat.db`).
+- Ofrece una interfaz web para ver, filtrar y autorizar procesos.
+- Permite marcar procesos como "whitelist" para que no se consideren no autorizados.
 
-
-## Descripcion
-SMAT es un sistema centralizado de monitoreo que permite supervisar procesos no autorizados en maquinas del laboratorio de computacion.
-
-**Componentes:**
-- **Servidor Central**: Recibe eventos de procesos desde los agentes
-- **Agentes**: Se instalan en cada maquina del laboratorio y envian informacion de procesos
+## Estructura del sistema
+- `run_server.py`: inicia el servidor central.
+- `agent.py`: ejecuta el agente en cada máquina cliente.
+- `install_agent_startup.bat`: instala el agente para que se ejecute al iniciar Windows.
+- `uninstall_agent_startup.bat`: elimina la instalación de inicio automático.
+- `templates/index.html`: interfaz web del servidor.
 
 ---
 
-## Instalacion del Servidor
-
-### 1. Dependencias
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Ejecutar el servidor
-```bash
-python run_server.py
-```
-
-**Salida esperada:**
-```
-[SMAT] Iniciando servidor en 0.0.0.0:8000
-[SMAT] Los agentes se conectaran a esta maquina en puerto 8000
-```
-
-El servidor ahora escucha en **todas las interfaces** (`0.0.0.0`), permitiendo conexiones desde cualquier maquina en la red.
-
-### 3. Acceder a la interfaz web
-```
-http://localhost:8000
-```
+## Requisitos
+- Python 3.x
+- `pip`
+- Dependencias del servidor:
+  ```bash
+  pip install -r requirements.txt
+  ```
+- Dependencias del agente:
+  ```bash
+  pip install psutil requests
+  ```
 
 ---
 
-## Instalacion del Agente (en maquinas del laboratorio)
+## Instalar y ejecutar el servidor
+1. En la máquina que actuará como servidor, abre una terminal.
+2. Instala las dependencias:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Ejecuta el servidor:
+   ```bash
+   python run_server.py
+   ```
+4. Abre el navegador y visita:
+   ```
+   http://localhost:8000
+   ```
 
-### 1. Preparar maquina destino
-- Copiar `agent.py` a la maquina
-- Instalar dependencia: `pip install psutil requests`
+### Comportamiento esperado
+- El servidor escucha en `0.0.0.0:8000`.
+- Está disponible desde otras máquinas de la misma red.
+- Guarda los eventos en `smat.db`.
 
-### 2. Obtener IP del servidor
-En la maquina servidor, ejecuta:
-```bash
-ipconfig
-```
-Busca la **IPv4** (ej: `192.168.1.10`)
+---
 
-### 3. Ejecutar el agente MANUALMENTE
+## Configurar los agentes
 
-#### Opcion 1: Ejecucion manual (para pruebas)
-```bash
-# Opcion 1: Con variable de entorno
-set SMAT_SERVER_HOST=192.168.1.10
-python agent.py
+### Preparar cada máquina cliente
+1. Copia `agent.py` a la máquina cliente.
+2. Instala las dependencias:
+   ```bash
+   pip install psutil requests
+   ```
+3. Obtén la IP del servidor ejecutando en este servidor:
+   ```bash
+   ipconfig
+   ```
+   Usa la dirección **IPv4**.
 
-# Opcion 2: URL completa
-set SMAT_SERVER_URL=http://192.168.1.10:8000/events/
-python agent.py
+### Ejecutar el agente manualmente
+En la máquina cliente, abre una terminal y usa una de estas opciones:
 
-# Opcion 3: Valores por defecto (si el servidor esta en 192.168.1.10)
-python agent.py
-```
+- Opción 1: definir host y puerto del servidor:
+  ```bash
+  set SMAT_SERVER_HOST=192.168.1.10
+  set SMAT_SERVER_PORT=8000
+  python agent.py
+  ```
 
-**Salida esperada:**
-```
-[SMAT] Iniciando monitoreo desde: PC03 (192.168.0.12)
-[SMAT] Servidor: http://192.168.1.10:8000/events/
-[SMAT] Intervalo de escaneo: 5s
-[SMAT] Procesos en whitelist: 9
-------------------------------------------------------------
-[OK] [15:31:05] HTTP 200 - 3 eventos enviados
-```
+- Opción 2: usar URL completa del servidor:
+  ```bash
+  set SMAT_SERVER_URL=http://192.168.1.10:8000/events/
+  python agent.py
+  ```
 
-### 4. Ejecutar el agente AUTOMATICAMENTE al iniciar (RECOMENDADO)
+- Opción 3: usar valores por defecto si el servidor está en `192.168.1.10`:
+  ```bash
+  python agent.py
+  ```
 
-Para que el agente se ejecute automaticamente cuando se encienda la computadora:
+### Ejecución recomendada: inicio automático
+Para que el agente se ejecute automáticamente en Windows:
 
-#### Paso 1: Instalar el agente como tarea programada
-1. Abre CMD como **ADMINISTRADOR**
-2. Navega a la carpeta donde esta `agent.py`
-3. Ejecuta: `install_agent_startup.bat`
+1. Abre CMD como administrador.
+2. Navega a la carpeta del proyecto:
+   ```bash
+   cd C:\ruta\a\SMAT
+   ```
+3. Ejecuta:
+   ```bash
+   install_agent_startup.bat
+   ```
 
-```bash
-cd C:\ruta\a\SMAT
-install_agent_startup.bat
-```
+Esto crea una tarea programada llamada `SMAT_Agent` que arranca el agente al iniciar Windows en segundo plano.
 
-El script hara lo siguiente:
-- Creara una tarea programada llamada "SMAT_Agent"
-- Se ejecutara automaticamente al iniciar la maquina
-- Se ejecutara con permisos SYSTEM (en segundo plano)
-- No se vera ventana de consola
-
-#### Paso 2: Verificar que esta instalado
-Para verificar que la tarea se creo correctamente:
+Para verificar la tarea:
 ```bash
 schtasks /query /tn SMAT_Agent
 ```
 
-#### Paso 3: Desinstalar (opcional)
-Si quieres remover el agente del inicio:
+Para desinstalar el inicio automático:
 ```bash
 cd C:\ruta\a\SMAT
 uninstall_agent_startup.bat
 ```
 
-**Ventajas de usar la tarea programada:**
-- No requiere intervencion manual
-- Se ejecuta automaticamente cada vez que se enciende
-- Se ejecuta en background sin interferir
-- Persiste despues de reiniciar
-- Facil de desinstalar
-
 ---
 
-## Configuracion de Whitelist
+## Whitelist de procesos
 
 ### En el servidor
-**Agregar procesos a whitelist:**
-1. En la interfaz web, haz clic en "Agregar" en un proceso no autorizado
-2. Se guardara automaticamente en la base de datos
-3. Los eventos futuros de ese proceso apareceran como autorizados
+- Abre la interfaz web.
+- Localiza un evento no autorizado.
+- Haz clic en "Agregar" para autorizar el proceso.
+- El proceso se guarda en la base de datos y, en adelante, se considera permitido.
 
-### En los agentes
-**Personalizar whitelist en cada maquina:**
+### En el agente
+Puedes indicar procesos autorizados antes de iniciar el agente:
 ```bash
 set SMAT_WHITE_LIST=chrome.exe,firefox.exe,code.exe,python.exe
 python agent.py
@@ -155,55 +133,53 @@ python agent.py
 
 ---
 
-## Uso de la Interfaz Web
+## Uso de la interfaz web
 
-### Pestanas de filtros
-- **Todos**: Todos los eventos
-- **Autorizados**: Solo procesos permitidos
-- **No autorizados**: Procesos sospechosos
-
-### Acciones
-- **Buscar**: Filtra por PC, proceso o IP
-- **Refrescar**: Recarga eventos desde servidor
-- **Limpiar cache**: Limpia la lista local del navegador
-- **Agregar**: Anade un proceso a la whitelist
+La web permite:
+- Ver todos los eventos.
+- Filtrar solo autorizados.
+- Ver solo eventos no autorizados.
+- Buscar por nombre de proceso, PC o dirección IP.
+- Actualizar la lista.
+- Agregar procesos a la whitelist.
 
 ---
 
-## Variables de Entorno
+## Variables de entorno
 
 ### Servidor
 ```bash
-SMAT_HOST=0.0.0.0              # Host a escuchar (default: 0.0.0.0)
-SMAT_PORT=8000                 # Puerto (default: 8000)
-SMAT_RELOAD=True               # Auto-reload en cambios (default: True)
+SMAT_HOST=0.0.0.0      # Host que escucha el servidor
+SMAT_PORT=8000         # Puerto del servidor
+SMAT_RELOAD=True       # Auto-reload en cambios (opcional)
 ```
 
 ### Agente
 ```bash
-SMAT_SERVER_HOST=192.168.1.10  # Host del servidor
-SMAT_SERVER_PORT=8000          # Puerto del servidor
-SMAT_SERVER_URL=http://...     # URL completa (alternativa a HOST+PORT)
-SMAT_BATCH_INTERVAL=5          # Segundos entre escaneos (default: 5)
-SMAT_POST_TIMEOUT=5.0          # Timeout de requests en segundos (default: 5)
-SMAT_WHITE_LIST=proc1,proc2    # Lista de procesos autorizados (opcional)
+SMAT_SERVER_HOST=192.168.1.10   # IP del servidor
+SMAT_SERVER_PORT=8000           # Puerto del servidor
+SMAT_SERVER_URL=http://...      # URL completa del servidor
+SMAT_BATCH_INTERVAL=5           # Segundos entre escaneos
+SMAT_POST_TIMEOUT=5.0           # Timeout para enviar datos
+SMAT_WHITE_LIST=proc1,proc2     # Procesos permitidos
 ```
 
 ---
 
-## Solucion de Problemas
+## Solución de problemas
 
-### "No se puede conectar a 192.168.1.10"
-- Verifica que el servidor este corriendo: `python run_server.py`
-- Verifica la IP del servidor: `ipconfig`
-- Verifica que ambas maquinas esten en la misma red
-- Desactiva el firewall temporalmente para pruebas
+### No se puede conectar al servidor
+- Asegúrate de que `run_server.py` esté ejecutándose.
+- Revisa la IP del servidor con `ipconfig`.
+- Confirma que ambas máquinas estén en la misma red.
+- Si es necesario, prueba con el firewall desactivado temporalmente.
 
-### El agente no envia datos
-- Verifica que psutil y requests esten instalados: `pip install psutil requests`
-- Ejecuta el agente con permisos de administrador
+### El agente no envía datos
+- Verifica que `psutil` y `requests` estén instalados.
+- Ejecuta el agente como administrador.
+- Revisa la salida del agente para errores.
 
-### Los eventos no aparecen en la web
-- Recarga la pagina (F5)
-- Haz clic en "Refrescar"
-- Revisa la consola del servidor por errores
+### No aparecen eventos en la web
+- Recarga la página del navegador.
+- Presiona "Refrescar" en la interfaz web.
+- Revisa la consola del servidor por posibles errores.
