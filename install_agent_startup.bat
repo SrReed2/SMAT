@@ -42,6 +42,24 @@ if %errorLevel% neq 0 (
 echo [OK] Ejecutando con permisos de administrador
 echo.
 
+REM Buscar la ruta de Python
+for /f "delims=" %%i in ('where python.exe 2^>nul') do set PYTHON_PATH=%%i
+
+if not defined PYTHON_PATH (
+    echo [ERROR] No se encontro Python en el sistema
+    echo.
+    echo Por favor:
+    echo 1. Instala Python desde python.org
+    echo 2. Asegúrate de que Python esté en el PATH
+    echo 3. Ejecuta este script nuevamente
+    echo.
+    pause
+    exit /b 1
+)
+
+echo [OK] Encontrado Python en: %PYTHON_PATH%
+echo.
+
 REM Crear la tarea programada
 echo [INFO] Creando tarea programada...
 echo.
@@ -51,13 +69,12 @@ set TASK_NAME=SMAT_Agent
 set TASK_DESCRIPTION=Sistema de Monitoreo Activo de Procesos - Agente Local
 
 REM Eliminar tarea antigua si existe
-tasklist /fi "IMAGENAME eq python.exe" | find /i "SMAT_Agent" >nul 2>&1
 schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
 
 REM Crear nueva tarea
 schtasks /create ^
     /tn "%TASK_NAME%" ^
-    /tr "python \"%AGENT_PATH%\"" ^
+    /tr "\"%PYTHON_PATH%\" \"%AGENT_PATH%\"" ^
     /sc onstart ^
     /ru SYSTEM ^
     /f ^
